@@ -61,13 +61,13 @@ func run() (err error) {
 			MaxAge: 86400,
 		}),
 	)
-	// 認可コードからトークンを取得する
+	// 認可コードからIDトークンを取得する
 	e.GET("/credentials", func(c echo.Context) error {
 		code := c.Request().URL.Query().Get("code")
 		res, _ := credential.GetAuthCredentialsWithTempCodeAuth(c.Request().Context(), c.Response().Writer, c.Request(), code)
 		return c.JSON(http.StatusOK, res)
 	})
-	// 認可コードからトークンを取得する
+	// リフレッシュトークンからIDトークンを取得する
 	e.GET("/refresh", func(c echo.Context) error {
 		refreshToken := c.Request().URL.Query().Get("refreshtoken")
 		println("refreshToken:")
