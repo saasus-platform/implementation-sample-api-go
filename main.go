@@ -9,10 +9,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
-	"github.com/saasus-platform/saasus-sdk-go/callback"
 	"github.com/saasus-platform/saasus-sdk-go/generated/authapi"
 	"github.com/saasus-platform/saasus-sdk-go/middleware"
 	"github.com/saasus-platform/saasus-sdk-go/modules/auth"
+	"github.com/saasus-platform/saasus-sdk-go/modules/auth/credential"
 )
 
 func main() {
@@ -62,7 +62,19 @@ func run() (err error) {
 		}),
 	)
 	// 認可コードからトークンを取得する
-	e.GET("/credentials", getCredentials)
+	e.GET("/credentials", func(c echo.Context) error {
+		code := c.Request().URL.Query().Get("code")
+		res, _ := credential.GetAuthCredentialsWithTempCodeAuth(c.Request().Context(), c.Response().Writer, c.Request(), code)
+		return c.JSON(http.StatusOK, res)
+	})
+	// 認可コードからトークンを取得する
+	e.GET("/refresh", func(c echo.Context) error {
+		refreshToken := c.Request().URL.Query().Get("refreshtoken")
+		println("refreshToken:")
+		println(refreshToken)
+		res, _ := credential.GetAuthCredentialsWithRefreshTokenAuth(c.Request().Context(), c.Response().Writer, c.Request(), refreshToken)
+		return c.JSON(http.StatusOK, res)
+	})
 	// アクセスしたユーザーの情報を取得する
 	// 実行するには、getCredentialsで取得したIDトークンをAuthorizationヘッダーに設定する必要がある
 	e.GET("/userinfo", getMe, authMiddleware)
@@ -70,11 +82,6 @@ func run() (err error) {
 	// 実行するには、getCredentialsで取得したIDトークンをAuthorizationヘッダーに設定する必要がある
 	e.GET("/users", getUsers, authMiddleware)
 	return e.Start(":80")
-}
-
-func getCredentials(c echo.Context) error {
-	callback.CallbackRouteFunction(c.Request().Context(), c.Response().Writer, c.Request())
-	return nil
 }
 
 func getMe(c echo.Context) error {
