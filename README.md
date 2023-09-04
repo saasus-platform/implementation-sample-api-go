@@ -16,5 +16,6 @@ export SAASUS_SAAS_ID="xxxxxxxxxx"
 export SAASUS_API_KEY="xxxxxxxxxx"
 export SAASUS_SECRET_KEY="xxxxxxxxxx"
 
+go mod tidy
 go run main.go
 ```

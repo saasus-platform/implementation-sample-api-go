@@ -64,8 +64,8 @@ github.com/pelletier/go-toml/v2 v2.0.8 h1:0ctb6s9mE31h0/lhu+J6OPmVeDxJn+kYnJc2jZ
 github.com/pelletier/go-toml/v2 v2.0.8/go.mod h1:vuYfssBdrU2XDZ9bYydBu6t+6a6PYNcZljzZR9VXg+4=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
-github.com/saasus-platform/saasus-sdk-go v0.0.2 h1:vgXz0WMR0RNlgGuCs1N3doaDSYErTex8kQbe3X1mXnA=
-github.com/saasus-platform/saasus-sdk-go v0.0.2/go.mod h1:/z/oh62JmxX5B8NmxLaumhliOYlPPxyX+P2j+t6cxsE=
+github.com/saasus-platform/saasus-sdk-go v0.0.3 h1:zDRU+YjRl2OOLy4O2qlz2T4DBvvObGR6wKxWTfyKe9E=
+github.com/saasus-platform/saasus-sdk-go v0.0.3/go.mod h1:X7QfUb717OBmgimqU8FnXVAIRN5IOAXnyy86EYZSsBY=
 github.com/spkg/bom v0.0.0-20160624110644-59b7046e48ad/go.mod h1:qLr4V1qq6nMqFKkMo8ZTx3f+BZEkzsRUY10Xsm2mwU0=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.4.0/go.mod h1:YvHI0jy2hoMjB+UWwv71VJQ9isScKT/TqJzVSSt89Yw=
