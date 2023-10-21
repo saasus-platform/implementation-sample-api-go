@@ -3,8 +3,9 @@ module github.com/saasus-platform/implementation-sample-api-go
 go 1.20
 
 require (
+	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.11.1
-	github.com/saasus-platform/saasus-sdk-go v0.0.2
+	github.com/saasus-platform/saasus-sdk-go v1.0.0
 )
 
 require (
@@ -43,3 +44,5 @@ require (
 	google.golang.org/protobuf v1.30.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// replace github.com/saasus-platform/saasus-sdk-go => ../saasus-sdk-go

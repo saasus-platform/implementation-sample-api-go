@@ -9,12 +9,21 @@ See the documentation [API implementation using SaaS Platform](https://docs.saas
 ```
 git clone git@github.com:saasus-platform/implementation-sample-api-go.git
 cd ./implementation-sample-api-go
+```
+
+```
+cp .env.example .env
+vi .env
 
 # Set Env for SaaSus Platform API
 # Get it in the SaaSus Admin Console
-export SAASUS_SAAS_ID="xxxxxxxxxx"
-export SAASUS_API_KEY="xxxxxxxxxx"
-export SAASUS_SECRET_KEY="xxxxxxxxxx"
+SAASUS_SAAS_ID="xxxxxxxxxx"
+SAASUS_API_KEY="xxxxxxxxxx"
+SAASUS_SECRET_KEY="xxxxxxxxxx"
 
+# Save and exit
+```
+
+```
 go run main.go
 ```
