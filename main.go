@@ -6,16 +6,21 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	echomiddleware "github.com/labstack/echo/v4/middleware"
+	"github.com/saasus-platform/saasus-sdk-go/ctxlib"
 	"github.com/saasus-platform/saasus-sdk-go/generated/authapi"
+	"github.com/saasus-platform/saasus-sdk-go/generated/pricingapi"
 	"github.com/saasus-platform/saasus-sdk-go/middleware"
 	"github.com/saasus-platform/saasus-sdk-go/modules/auth"
 	"github.com/saasus-platform/saasus-sdk-go/modules/auth/credential"
-	"github.com/saasus-platform/saasus-sdk-go/ctxlib"
-	"github.com/joho/godotenv"
+	"github.com/saasus-platform/saasus-sdk-go/modules/pricing"
 
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 func main() {
@@ -25,6 +30,8 @@ func main() {
 }
 
 var authClient *authapi.ClientWithResponses
+
+var pricingClient *pricingapi.ClientWithResponses
 
 // run is a function for start echo server.
 func run() error {
@@ -36,6 +43,11 @@ func run() error {
 	authClient, err = auth.AuthWithResponse()
 	if err != nil {
 		return fmt.Errorf("failed to create auth client: %w", err)
+	}
+
+	pricingClient, err = pricing.PricingWithResponse()
+	if err != nil {
+		return fmt.Errorf("failed to create pricing client: %w", err)
 	}
 
 	// create middleware by authMiddlewareEcho with idTokenGetter{}.
@@ -58,6 +70,11 @@ func run() error {
 				http.MethodPost,
 				http.MethodDelete,
 			},
+			AllowHeaders: []string{
+				"Authorization",
+				"X-Requested-With",
+				"Content-Type",
+			},
 			MaxAge: 86400,
 		}),
 	)
@@ -75,6 +92,20 @@ func run() error {
 	// SaaSusに登録されているユーザーの一覧を取得する
 	// 実行するには、getCredentialsで取得したIDトークンをAuthorizationヘッダーに設定する必要がある
 	e.GET("/users", getUsers, authMiddleware)
+	// ユーザーが所属するテナント属性を取得する
+	// 実行するには、getCredentialsで取得したIDトークンをAuthorizationヘッダーに設定する必要がある
+	e.GET("/tenant_attributes", getTenantAttributes, authMiddleware)
+	// ユーザー属性を取得する
+	// 実行するには、getCredentialsで取得したIDトークンをAuthorizationヘッダーに設定する必要がある
+	e.GET("/user_attributes", getUserAttributes, authMiddleware)
+	// プラン情報を取得する
+	e.GET("/pricing_plan", getPricingPlan, authMiddleware)
+	// ユーザー登録を実行する
+	e.POST("/user_register", userRegister, authMiddleware)
+	// ユーザー削除を実行する
+	e.DELETE("/user_delete", userDelete, authMiddleware)
+	// ユーザー削除ログを取得する
+	e.GET("/delete_user_log", getDeleteUserLogs, authMiddleware)
 	return e.Start(":80")
 }
 
@@ -159,8 +190,26 @@ func getUsers(c echo.Context) error {
 		c.Logger().Error("failed to get user info")
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
-	
-	res, err := authClient.GetTenantUsersWithResponse(c.Request().Context(), userInfo.Tenants[0].Id)
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	tenantId := c.QueryParam("tenant_id") // クエリパラメータを取得
+	if tenantId == "" {
+		c.Logger().Error("tenant_id query parameter is missing")
+		return c.String(http.StatusBadRequest, "tenant_id query parameter is required")
+	}
+
+	// ユーザーが所属しているテナントか確認する
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantId)
+	if !isBelongingTenant {
+		c.Logger().Errorf("tenant %s does not belong to user", tenantId)
+		return c.String(http.StatusForbidden, "Tenant that does not belong")
+	}
+
+	res, err := authClient.GetTenantUsersWithResponse(c.Request().Context(), tenantId)
 	if err != nil {
 		c.Logger().Error("failed to get saas users: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -175,4 +224,363 @@ func getUsers(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 	return c.JSON(http.StatusOK, res.JSON200.Users)
+}
+
+// getTenantAttributes is a function for /tenant_attributes route.
+func getTenantAttributes(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	tenantId := c.QueryParam("tenant_id") // クエリパラメータを取得
+	if tenantId == "" {
+		c.Logger().Error("tenant_id query parameter is missing")
+		return c.String(http.StatusBadRequest, "tenant_id query parameter is required")
+	}
+
+	// ユーザーが所属しているテナントか確認する
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantId)
+	if !isBelongingTenant {
+		c.Logger().Errorf("tenant %s does not belong to user", tenantId)
+		return c.String(http.StatusForbidden, "Tenant that does not belong")
+	}
+
+	// テナント属性の取得
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("failed to get tenant attributes: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// テナント情報の取得
+	tenantInfoResp, err := authClient.GetTenantWithResponse(context.Background(), tenantId)
+	if err != nil {
+		c.Logger().Errorf("failed to get tenant: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// テナント属性のレスポンスから JSON を取得
+	tenantAttributes := tenantAttributesResp.JSON200
+	tenantInfo := tenantInfoResp.JSON200
+
+	result := make(map[string]map[string]interface{})
+
+	for _, tenantAttribute := range tenantAttributes.TenantAttributes {
+		attributeName := tenantAttribute.AttributeName
+		value, ok := tenantInfo.Attributes[attributeName]
+		if !ok {
+			value = nil
+		}
+
+		detail := map[string]interface{}{
+			"display_name":   tenantAttribute.DisplayName,
+			"attribute_type": tenantAttribute.AttributeType,
+			"value":          value,
+		}
+
+		result[attributeName] = detail
+	}
+
+	return c.JSON(http.StatusOK, result)
+}
+
+func belongingTenant(tenants []authapi.UserAvailableTenant, tenantId authapi.Uuid) bool {
+	for _, tenant := range tenants {
+		if tenant.Id == tenantId {
+			return true
+		}
+	}
+	return false
+}
+
+// getUserAttributes is a function for /user_attributes route.
+func getUserAttributes(c echo.Context) error {
+	// ユーザー属性の取得
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("failed to get tenant attributes: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// ユーザー属性のレスポンスから JSON を取得
+	userAttributes := userAttributesResp.JSON200
+
+	return c.JSON(http.StatusOK, userAttributes)
+}
+
+// getPricingPlan is a function for /pricing_plan route.
+func getPricingPlan(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	planId := c.QueryParam("plan_id") // クエリパラメータを取得
+
+	if planId == "" {
+		c.Logger().Error("plan_id query parameter is missing")
+		return c.String(http.StatusBadRequest, "plan_id query parameter is required")
+	}
+
+	// ユーザー属性の取得
+	planResp, err := pricingClient.GetPricingPlanWithResponse(context.Background(), planId)
+	if err != nil {
+		c.Logger().Errorf("failed to get tenant attributes: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// ユーザー属性のレスポンスから JSON を取得
+	plan := planResp.JSON200
+
+	return c.JSON(http.StatusOK, plan)
+}
+
+type UserRegisterRequest struct {
+	Email               string                 `json:"email"`
+	Password            string                 `json:"password"`
+	TenantID            string                 `json:"tenantId"`
+	UserAttributeValues map[string]interface{} `json:"userAttributeValues"`
+}
+
+// userRegister is a function for /user_register route.
+func userRegister(c echo.Context) error {
+	var request UserRegisterRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request"})
+	}
+
+	email := request.Email
+	password := request.Password
+	tenantID := request.TenantID
+	userAttributeValues := request.UserAttributeValues
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantID)
+	if !isBelongingTenant {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Tenant that does not belong"})
+	}
+
+	// ユーザー属性の取得
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("failed to get tenant attributes: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// ユーザー属性のレスポンスから JSON を取得
+	userAttributes := userAttributesResp.JSON200
+	if userAttributeValues == nil {
+		userAttributeValues = make(map[string]interface{})
+	}
+
+	if userAttributes != nil {
+		for _, attribute := range userAttributes.UserAttributes {
+			attributeName := attribute.AttributeName
+			attributeType := attribute.AttributeType
+
+			if value, ok := userAttributeValues[attributeName]; ok && attributeType == "number" {
+				userAttributeValues[attributeName] = int(value.(float64))
+			}
+		}
+	}
+
+	createSaasUserParam := authapi.CreateSaasUserJSONRequestBody{
+		Email:    email,
+		Password: password,
+	}
+
+	_, err = authClient.CreateSaasUser(context.Background(), createSaasUserParam)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create SaaS user"})
+	}
+
+	createTenantUserParam := authapi.CreateTenantUserParam{
+		Email:      email,
+		Attributes: userAttributeValues,
+	}
+
+	tenantUser, err := authClient.CreateTenantUserWithResponse(context.Background(), tenantID, createTenantUserParam)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant user"})
+	}
+
+	rolesResp, err := authClient.GetRolesWithResponse(context.Background())
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to get roles"})
+	}
+
+	addRole := "admin"
+	for _, role := range rolesResp.JSON200.Roles {
+		if role.RoleName == "user" {
+			addRole = role.RoleName
+			break
+		}
+	}
+
+	createTenantUserRolesParam := authapi.CreateTenantUserRolesParam{
+		RoleNames: []string{addRole},
+	}
+
+	_, err = authClient.CreateTenantUserRolesWithResponse(context.Background(), tenantID, tenantUser.JSON201.Id, 3, createTenantUserRolesParam)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to assign roles"})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{"message": "User registered successfully"})
+}
+
+type UserDeleteRequest struct {
+	TenantId string `json:"tenantId" binding:"required"`
+	UserId   string `json:"userId" binding:"required"`
+}
+
+type DeleteUserLog struct {
+	Id       uint      `gorm:"primaryKey" json:"id"`
+	TenantId string    `json:"tenant_id"`
+	UserId   string    `json:"user_id"`
+	Email    string    `json:"email"`
+	DeleteAt time.Time `gorm:"column:delete_at"`
+}
+
+type DeleteUserLogResponse struct {
+	Id       uint   `json:"id"`
+	TenantId string `json:"tenant_id"`
+	UserId   string `json:"user_id"`
+	Email    string `json:"email"`
+	DeleteAt string `json:"delete_at"`
+}
+
+func getDB() (*gorm.DB, error) {
+	dsn := "host=localhost user=postgres password=postgres dbname=postgres port=5432 sslmode=disable"
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	if err != nil {
+		return nil, err
+	}
+	return db, nil
+}
+
+func userDelete(c echo.Context) error {
+	// リクエストデータの取得
+	req := new(UserDeleteRequest)
+	if err := c.Bind(req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"detail": "Invalid request"})
+	}
+
+	tenantId := req.TenantId
+	userId := req.UserId
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantId)
+	if !isBelongingTenant {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Tenant that does not belong"})
+	}
+
+	// ユーザー削除処理
+	// SaaSusからユーザー情報を取得
+	deleteUser, err := authClient.GetTenantUserWithResponse(context.Background(), tenantId, userId)
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+	}
+
+	// ユーザー削除
+	authClient.DeleteTenantUser(context.Background(), tenantId, userId)
+
+	// ユーザー削除ログをデータベースに登録
+	deleteUserLog := DeleteUserLog{
+		TenantId: tenantId,
+		UserId:   userId,
+		Email:    deleteUser.JSON200.Email,
+		DeleteAt: time.Now(),
+	}
+
+	db, err := getDB()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+	}
+	sqlDB, _ := db.DB()
+	defer sqlDB.Close()
+
+	if err := db.Table("public.delete_user_log").Create(&deleteUserLog).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "User deleted successfully"})
+}
+
+func getDeleteUserLogs(c echo.Context) error {
+	tenantId := c.QueryParam("tenant_id")
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantId)
+	if !isBelongingTenant {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Tenant that does not belong"})
+	}
+
+	// データベース接続の取得
+	db, err := getDB()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": "Failed to connect to the database"})
+	}
+
+	var deleteUserLogs []DeleteUserLog
+	if err := db.Table("public.delete_user_log").Where("tenant_id = ?", tenantId).Find(&deleteUserLogs).Error; err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
+	}
+
+	// Gormのオブジェクトをレスポンス用の構造体に変換
+	responseData := []DeleteUserLogResponse{}
+	for _, log := range deleteUserLogs {
+		responseData = append(responseData, DeleteUserLogResponse{
+			Id:       log.Id,
+			TenantId: log.TenantId,
+			UserId:   log.UserId,
+			Email:    log.Email,
+			DeleteAt: log.DeleteAt.Format(time.RFC3339),
+		})
+	}
+
+	return c.JSON(http.StatusOK, responseData)
 }
