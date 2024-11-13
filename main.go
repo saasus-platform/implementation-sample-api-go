@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -402,7 +403,10 @@ func userRegister(c echo.Context) error {
 			attributeType := attribute.AttributeType
 
 			if value, ok := userAttributeValues[attributeName]; ok && attributeType == "number" {
-				userAttributeValues[attributeName] = int(value.(float64))
+				userAttributeValues[attributeName], err = strconv.Atoi(value.(string))
+				if err != nil {
+					return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid attribute value"})
+				}
 			}
 		}
 	}
