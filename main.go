@@ -75,6 +75,7 @@ func run() error {
 				"Authorization",
 				"X-Requested-With",
 				"Content-Type",
+				"x-saasus-referer",
 			},
 			MaxAge: 86400,
 		}),
@@ -164,7 +165,7 @@ func authMiddlewareEcho(getter middleware.IDTokenGetter) echo.MiddlewareFunc {
 func extractRefererEcho() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ref := c.Request().Referer()
+			ref := c.Request().Header.Get("x-saasus-referer")
 			if ref != "" {
 				ctx := context.WithValue(c.Request().Context(), ctxlib.RefererKey, ref)
 				c.SetRequest(c.Request().WithContext(ctx))
@@ -594,139 +595,138 @@ func getDeleteUserLogs(c echo.Context) error {
 }
 
 func getTenantAttributesList(c echo.Context) error {
-    tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
-    if err != nil {
-        c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
-    }
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
+	}
 
-    // テナント属性が存在しない場合のハンドリング
-    if tenantAttributesResp.JSON200 == nil {
+	// テナント属性が存在しない場合のハンドリング
+	if tenantAttributesResp.JSON200 == nil {
 		return c.JSON(http.StatusOK, echo.Map{"message": "No tenant attributes found"})
-    }
+	}
 
-    return c.JSON(http.StatusOK, tenantAttributesResp.JSON200)
+	return c.JSON(http.StatusOK, tenantAttributesResp.JSON200)
 }
 
-
 type SelfSignupRequest struct {
-    TenantName           string                 `json:"tenantName"`
-    TenantAttributeValues map[string]interface{} `json:"tenantAttributeValues"`
-    UserAttributeValues  map[string]interface{} `json:"userAttributeValues"`
+	TenantName            string                 `json:"tenantName"`
+	TenantAttributeValues map[string]interface{} `json:"tenantAttributeValues"`
+	UserAttributeValues   map[string]interface{} `json:"userAttributeValues"`
 }
 
 func selfSignup(c echo.Context) error {
-    var request SelfSignupRequest
-    if err := c.Bind(&request); err != nil {
-        c.Logger().Errorf("Failed to bind request: %v", err)
-        return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request"})
-    }
+	var request SelfSignupRequest
+	if err := c.Bind(&request); err != nil {
+		c.Logger().Errorf("Failed to bind request: %v", err)
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request"})
+	}
 
-    userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
-    if !ok {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
 		c.Logger().Error("failed to get user info")
 		return c.String(http.StatusInternalServerError, "internal server error")
-    }
+	}
 
-    // ユーザーが既にテナントに関連付けられている場合のチェック
-    if len(userInfo.Tenants) > 0 {
-        c.Logger().Error("User is already associated with a tenant")
-        return c.JSON(http.StatusBadRequest, echo.Map{"error": "User is already associated with a tenant"})
-    }
+	// ユーザーが既にテナントに関連付けられている場合のチェック
+	if len(userInfo.Tenants) > 0 {
+		c.Logger().Error("User is already associated with a tenant")
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "User is already associated with a tenant"})
+	}
 
-    tenantName := request.TenantName
-    tenantAttributeValues := request.TenantAttributeValues
-    userAttributeValues := request.UserAttributeValues
+	tenantName := request.TenantName
+	tenantAttributeValues := request.TenantAttributeValues
+	userAttributeValues := request.UserAttributeValues
 
-    // テナント属性を取得する
-    tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
-    if err != nil {
-        c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
-    }
+	// テナント属性を取得する
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
+	}
 
-    tenantAttributes := tenantAttributesResp.JSON200
-    if tenantAttributeValues == nil {
-        tenantAttributeValues = make(map[string]interface{})
-    }
+	tenantAttributes := tenantAttributesResp.JSON200
+	if tenantAttributeValues == nil {
+		tenantAttributeValues = make(map[string]interface{})
+	}
 
-    if tenantAttributes != nil {
-        for _, attribute := range tenantAttributes.TenantAttributes {
-            attributeName := attribute.AttributeName
-            attributeType := attribute.AttributeType
-            if value, ok := tenantAttributeValues[attributeName]; ok && attributeType == "number" {
-                tenantAttributeValues[attributeName], err = strconv.Atoi(value.(string))
-                if err != nil {
-                    c.Logger().Errorf("Invalid tenant attribute value: %v", err)
-                    return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid tenant attribute value"})
-                }
-            }
-        }
-    }
+	if tenantAttributes != nil {
+		for _, attribute := range tenantAttributes.TenantAttributes {
+			attributeName := attribute.AttributeName
+			attributeType := attribute.AttributeType
+			if value, ok := tenantAttributeValues[attributeName]; ok && attributeType == "number" {
+				tenantAttributeValues[attributeName], err = strconv.Atoi(value.(string))
+				if err != nil {
+					c.Logger().Errorf("Invalid tenant attribute value: %v", err)
+					return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid tenant attribute value"})
+				}
+			}
+		}
+	}
 
-    // テナントを作成する
-    tenantProps := authapi.CreateTenantParam{
-        Name:                 tenantName,
-        Attributes:           tenantAttributeValues,
-        BackOfficeStaffEmail: userInfo.Email,
-    }
+	// テナントを作成する
+	tenantProps := authapi.CreateTenantParam{
+		Name:                 tenantName,
+		Attributes:           tenantAttributeValues,
+		BackOfficeStaffEmail: userInfo.Email,
+	}
 
-    tenantResp, err := authClient.CreateTenantWithResponse(context.Background(), tenantProps)
-    if err != nil {
-        c.Logger().Errorf("Failed to create tenant: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant"})
-    }
+	tenantResp, err := authClient.CreateTenantWithResponse(context.Background(), tenantProps)
+	if err != nil {
+		c.Logger().Errorf("Failed to create tenant: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant"})
+	}
 
-    tenantID := tenantResp.JSON201.Id
+	tenantID := tenantResp.JSON201.Id
 
-    // ユーザー属性を取得する
-    userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
-    if err != nil {
-        c.Logger().Errorf("Failed to retrieve user attributes: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve user attributes"})
-    }
+	// ユーザー属性を取得する
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("Failed to retrieve user attributes: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve user attributes"})
+	}
 
-    userAttributes := userAttributesResp.JSON200
-    if userAttributeValues == nil {
-        userAttributeValues = make(map[string]interface{})
-    }
+	userAttributes := userAttributesResp.JSON200
+	if userAttributeValues == nil {
+		userAttributeValues = make(map[string]interface{})
+	}
 
-    if userAttributes != nil {
-        for _, attribute := range userAttributes.UserAttributes {
-            attributeName := attribute.AttributeName
-            attributeType := attribute.AttributeType
-            if value, ok := userAttributeValues[attributeName]; ok && attributeType == "number" {
-                userAttributeValues[attributeName], err = strconv.Atoi(value.(string))
-                if err != nil {
-                    c.Logger().Errorf("Invalid user attribute value: %v", err)
-                    return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid user attribute value"})
-                }
-            }
-        }
-    }
+	if userAttributes != nil {
+		for _, attribute := range userAttributes.UserAttributes {
+			attributeName := attribute.AttributeName
+			attributeType := attribute.AttributeType
+			if value, ok := userAttributeValues[attributeName]; ok && attributeType == "number" {
+				userAttributeValues[attributeName], err = strconv.Atoi(value.(string))
+				if err != nil {
+					c.Logger().Errorf("Invalid user attribute value: %v", err)
+					return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid user attribute value"})
+				}
+			}
+		}
+	}
 
-    // テナントユーザーを登録する
-    createTenantUserParam := authapi.CreateTenantUserParam{
-        Email:      userInfo.Email,
-        Attributes: userAttributeValues,
-    }
+	// テナントユーザーを登録する
+	createTenantUserParam := authapi.CreateTenantUserParam{
+		Email:      userInfo.Email,
+		Attributes: userAttributeValues,
+	}
 
-    tenantUserResp, err := authClient.CreateTenantUserWithResponse(context.Background(), tenantID, createTenantUserParam)
-    if err != nil {
-        c.Logger().Errorf("Failed to create tenant user: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant user"})
-    }
+	tenantUserResp, err := authClient.CreateTenantUserWithResponse(context.Background(), tenantID, createTenantUserParam)
+	if err != nil {
+		c.Logger().Errorf("Failed to create tenant user: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant user"})
+	}
 
-    // ユーザーにロールを割り当てる
-    createTenantUserRolesParam := authapi.CreateTenantUserRolesParam{
-        RoleNames: []string{"admin"},
-    }
+	// ユーザーにロールを割り当てる
+	createTenantUserRolesParam := authapi.CreateTenantUserRolesParam{
+		RoleNames: []string{"admin"},
+	}
 
-    _, err = authClient.CreateTenantUserRolesWithResponse(context.Background(), tenantID, tenantUserResp.JSON201.Id, 3, createTenantUserRolesParam)
-    if err != nil {
-        c.Logger().Errorf("Failed to assign roles: %v", err)
-        return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to assign roles"})
-    }
+	_, err = authClient.CreateTenantUserRolesWithResponse(context.Background(), tenantID, tenantUserResp.JSON201.Id, 3, createTenantUserRolesParam)
+	if err != nil {
+		c.Logger().Errorf("Failed to assign roles: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to assign roles"})
+	}
 
-    return c.JSON(http.StatusOK, echo.Map{"message": "User successfully registered to the tenant"})
+	return c.JSON(http.StatusOK, echo.Map{"message": "User successfully registered to the tenant"})
 }
