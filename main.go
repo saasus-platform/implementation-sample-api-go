@@ -75,6 +75,7 @@ func run() error {
 				"Authorization",
 				"X-Requested-With",
 				"Content-Type",
+				"X-Access-Token", // カスタムヘッダーを許可
 			},
 			MaxAge: 86400,
 		}),
@@ -111,6 +112,16 @@ func run() error {
 	e.GET("/tenant_attributes_list", getTenantAttributesList)
 	// セルフサインアップを実行する
 	e.POST("/self_sign_up", selfSignup, authMiddleware)
+	// MFAの状態を取得 (有効/無効の確認)
+	e.GET("/mfa_status", getMfaStatus, authMiddleware)
+	// MFAのセットアップ情報を取得 (QRコードを発行)
+	e.GET("/mfa_setup", getMfaSetup, authMiddleware)
+	// ユーザーのMFA認証コードを検証
+	e.POST("/mfa_verify", verifyMfa, authMiddleware)
+	// MFAを有効化する
+	e.POST("/mfa_enable", enableMfa, authMiddleware)
+	// MFAを無効化する
+	e.POST("/mfa_disable", disableMfa, authMiddleware)
 	return e.Start(":80")
 }
 
@@ -728,4 +739,134 @@ func selfSignup(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{"message": "User successfully registered to the tenant"})
+}
+
+// MFAの状態を取得 (有効/無効の確認)
+func getMfaStatus(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("Failed to get user info")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	accessToken := c.Request().Header.Get("X-Access-Token")
+	if accessToken == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
+	}
+
+	response, err := authClient.GetUserMfaPreferenceWithResponse(context.Background(), userInfo.Id)
+	if err != nil || response.JSON200 == nil {
+		c.Logger().Errorf("failed to get MFA status: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve MFA status"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]bool{"enabled": response.JSON200.Enabled})
+}
+
+// MFAのセットアップ情報を取得 (QRコードを発行)
+func getMfaSetup(c echo.Context) error {
+	accessToken := c.Request().Header.Get("X-Access-Token")
+	if accessToken == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
+	}
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	response, err := authClient.CreateSecretCodeWithResponse(context.Background(), userInfo.Id, authapi.CreateSecretCodeJSONRequestBody{
+		AccessToken: accessToken,
+	})
+	if err != nil || response.JSON201 == nil {
+		c.Logger().Errorf("failed to create secret code: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate QR code"})
+	}
+
+	qrCodeUrl := "otpauth://totp/SaaSusPlatform:" + userInfo.Email + "?secret=" + response.JSON201.SecretCode + "&issuer=SaaSusPlatform"
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"secretKey": response.JSON201.SecretCode,
+		"qrCodeUrl": qrCodeUrl,
+	})
+}
+
+// ユーザーのMFA認証コードを検証
+func verifyMfa(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("Failed to get user info")
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	accessToken := c.Request().Header.Get("X-Access-Token")
+	if accessToken == "" {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
+	}
+
+	var requestBody struct {
+		VerificationCode string `json:"verification_code"`
+	}
+	if err := c.Bind(&requestBody); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request: malformed JSON or incorrect parameters"})
+	}
+	if requestBody.VerificationCode == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Verification code is required"})
+	}
+
+	response, err := authClient.UpdateSoftwareTokenWithResponse(context.Background(), userInfo.Id, authapi.UpdateSoftwareTokenJSONRequestBody{
+		AccessToken:      accessToken,
+		VerificationCode: requestBody.VerificationCode,
+	})
+	if err != nil || response.StatusCode() != http.StatusOK {
+		c.Logger().Errorf("MFA verification failed: Status Code %d, Response %s", response.StatusCode(), string(response.Body))
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "MFA verification failed"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "MFA verification successful"})
+}
+
+// MFAを有効化する
+func enableMfa(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	method := authapi.SoftwareToken
+	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
+		Enabled: true,
+		Method:  &method,
+	}
+
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	if err != nil {
+		c.Logger().Errorf("Failed to enable MFA: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to enable MFA"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "MFA has been enabled"})
+}
+
+// MFAを無効化する
+func disableMfa(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	method := authapi.SoftwareToken
+	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
+		Enabled: false,
+		Method:  &method,
+	}
+
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	if err != nil {
+		c.Logger().Errorf("Failed to disable MFA: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to disable MFA"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "MFA has been disabled"})
 }
