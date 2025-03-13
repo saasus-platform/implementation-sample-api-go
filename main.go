@@ -742,40 +742,50 @@ func selfSignup(c echo.Context) error {
 }
 
 // MFAの状態を取得 (有効/無効の確認)
+// フロントエンドアプリは、リクエストヘッダーに X-Access-Token を含める必要があります
 func getMfaStatus(c echo.Context) error {
+	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		c.Logger().Error("Failed to get user info")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
+	// リクエストヘッダーから X-Access-Token を取得
 	accessToken := c.Request().Header.Get("X-Access-Token")
 	if accessToken == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
 	}
 
+	// SaaSus の API を使用してユーザーの MFA 設定を取得
 	response, err := authClient.GetUserMfaPreferenceWithResponse(context.Background(), userInfo.Id)
 	if err != nil || response.JSON200 == nil {
 		c.Logger().Errorf("failed to get MFA status: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve MFA status"})
 	}
 
+	// MFA の有効/無効の状態を返す
 	return c.JSON(http.StatusOK, map[string]bool{"enabled": response.JSON200.Enabled})
 }
 
 // MFAのセットアップ情報を取得 (QRコードを発行)
+// フロントエンドアプリは、リクエストヘッダーに X-Access-Token を含める必要があります
 func getMfaSetup(c echo.Context) error {
+	// リクエストヘッダーから X-Access-Token を取得
 	accessToken := c.Request().Header.Get("X-Access-Token")
 	if accessToken == "" {
+		// アクセストークンがない場合は、認証エラーを返す
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
 	}
 
+	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		c.Logger().Error("failed to get user info")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
+	// SaaSus API を使用して 認証アプリケーション登録用のシークレットコードを作成
 	response, err := authClient.CreateSecretCodeWithResponse(context.Background(), userInfo.Id, authapi.CreateSecretCodeJSONRequestBody{
 		AccessToken: accessToken,
 	})
@@ -784,8 +794,10 @@ func getMfaSetup(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to generate QR code"})
 	}
 
+	// Google Authenticator などで使用する QR コード URL を生成
 	qrCodeUrl := "otpauth://totp/SaaSusPlatform:" + userInfo.Email + "?secret=" + response.JSON201.SecretCode + "&issuer=SaaSusPlatform"
 
+	// 秘密鍵と QR コード URL を返す
 	return c.JSON(http.StatusOK, map[string]string{
 		"secretKey": response.JSON201.SecretCode,
 		"qrCodeUrl": qrCodeUrl,
@@ -793,18 +805,22 @@ func getMfaSetup(c echo.Context) error {
 }
 
 // ユーザーのMFA認証コードを検証
+// フロントエンドアプリは、リクエストヘッダーに X-Access-Token を含める必要があります
 func verifyMfa(c echo.Context) error {
+	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		c.Logger().Error("Failed to get user info")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
+	// リクエストヘッダーから X-Access-Token を取得
 	accessToken := c.Request().Header.Get("X-Access-Token")
 	if accessToken == "" {
 		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
 	}
 
+	// リクエストボディから認証コードを取得
 	var requestBody struct {
 		VerificationCode string `json:"verification_code"`
 	}
@@ -815,6 +831,7 @@ func verifyMfa(c echo.Context) error {
 		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Verification code is required"})
 	}
 
+	// SaaSus API を使用して 認証アプリケーションを登録
 	response, err := authClient.UpdateSoftwareTokenWithResponse(context.Background(), userInfo.Id, authapi.UpdateSoftwareTokenJSONRequestBody{
 		AccessToken:      accessToken,
 		VerificationCode: requestBody.VerificationCode,
@@ -829,17 +846,20 @@ func verifyMfa(c echo.Context) error {
 
 // MFAを有効化する
 func enableMfa(c echo.Context) error {
+	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
+	// MFA を有効化するためのリクエストボディを作成
 	method := authapi.SoftwareToken
 	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
 		Enabled: true,
 		Method:  &method,
 	}
 
+	// SaaSus API を使用して MFA を有効化
 	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
 	if err != nil {
 		c.Logger().Errorf("Failed to enable MFA: %v", err)
@@ -851,17 +871,20 @@ func enableMfa(c echo.Context) error {
 
 // MFAを無効化する
 func disableMfa(c echo.Context) error {
+	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
+	// MFA を無効化するためのリクエストボディを作成
 	method := authapi.SoftwareToken
 	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
 		Enabled: false,
 		Method:  &method,
 	}
 
+	// SaaSus API を使用して MFA を無効化
 	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
 	if err != nil {
 		c.Logger().Errorf("Failed to disable MFA: %v", err)
