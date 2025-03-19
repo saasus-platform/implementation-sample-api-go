@@ -742,19 +742,12 @@ func selfSignup(c echo.Context) error {
 }
 
 // MFAの状態を取得 (有効/無効の確認)
-// フロントエンドアプリは、リクエストヘッダーに X-Access-Token を含める必要があります
 func getMfaStatus(c echo.Context) error {
 	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
 	if !ok {
 		c.Logger().Error("Failed to get user info")
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
-	}
-
-	// リクエストヘッダーから X-Access-Token を取得
-	accessToken := c.Request().Header.Get("X-Access-Token")
-	if accessToken == "" {
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Access token is missing"})
 	}
 
 	// SaaSus の API を使用してユーザーの MFA 設定を取得
@@ -797,9 +790,8 @@ func getMfaSetup(c echo.Context) error {
 	// Google Authenticator などで使用する QR コード URL を生成
 	qrCodeUrl := "otpauth://totp/SaaSusPlatform:" + userInfo.Email + "?secret=" + response.JSON201.SecretCode + "&issuer=SaaSusPlatform"
 
-	// 秘密鍵と QR コード URL を返す
+	// QR コード URL を返す
 	return c.JSON(http.StatusOK, map[string]string{
-		"secretKey": response.JSON201.SecretCode,
 		"qrCodeUrl": qrCodeUrl,
 	})
 }
