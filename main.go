@@ -112,6 +112,8 @@ func run() error {
 	e.GET("/tenant_attributes_list", getTenantAttributesList)
 	// セルフサインアップを実行する
 	e.POST("/self_sign_up", selfSignup, authMiddleware)
+	// ログアウトを実行する
+	e.POST("/logout", logout, authMiddleware)
 	return e.Start(":80")
 }
 
@@ -729,4 +731,21 @@ func selfSignup(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, echo.Map{"message": "User successfully registered to the tenant"})
+}
+
+func logout(c echo.Context) error {
+	// クライアントのクッキーを削除
+	c.SetCookie(&http.Cookie{
+		Name:     "SaaSusRefreshToken",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   false,
+	})
+
+	// JSON レスポンスを返す
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Logged out successfully",
+	})
 }
