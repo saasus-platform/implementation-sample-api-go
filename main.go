@@ -75,6 +75,7 @@ func run() error {
 				"Authorization",
 				"X-Requested-With",
 				"Content-Type",
+				"x-saasus-referer",
 			},
 			MaxAge: 86400,
 		}),
@@ -166,7 +167,7 @@ func authMiddlewareEcho(getter middleware.IDTokenGetter) echo.MiddlewareFunc {
 func extractRefererEcho() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ref := c.Request().Referer()
+			ref := c.Request().Header.Get("x-saasus-referer")
 			if ref != "" {
 				ctx := context.WithValue(c.Request().Context(), ctxlib.RefererKey, ref)
 				c.SetRequest(c.Request().WithContext(ctx))
