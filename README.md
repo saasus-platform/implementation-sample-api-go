@@ -25,5 +25,6 @@ SAASUS_SECRET_KEY="xxxxxxxxxx"
 ```
 
 ```
+docker compose up -d
 go run main.go
 ```

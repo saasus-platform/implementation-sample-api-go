@@ -76,6 +76,7 @@ func run() error {
 				"X-Requested-With",
 				"Content-Type",
 				"X-Access-Token", // カスタムヘッダーを許可
+				"x-saasus-referer",
 			},
 			MaxAge: 86400,
 		}),
@@ -122,6 +123,8 @@ func run() error {
 	e.POST("/mfa_enable", enableMfa, authMiddleware)
 	// MFAを無効化する
 	e.POST("/mfa_disable", disableMfa, authMiddleware)
+	// ログアウトを実行する
+	e.POST("/logout", logout, authMiddleware)
 	return e.Start(":80")
 }
 
@@ -175,7 +178,7 @@ func authMiddlewareEcho(getter middleware.IDTokenGetter) echo.MiddlewareFunc {
 func extractRefererEcho() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ref := c.Request().Referer()
+			ref := c.Request().Header.Get("x-saasus-referer")
 			if ref != "" {
 				ctx := context.WithValue(c.Request().Context(), ctxlib.RefererKey, ref)
 				c.SetRequest(c.Request().WithContext(ctx))
@@ -884,4 +887,21 @@ func disableMfa(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, map[string]string{"message": "MFA has been disabled"})
+}
+
+func logout(c echo.Context) error {
+	// クライアントのクッキーを削除
+	c.SetCookie(&http.Cookie{
+		Name:     "SaaSusRefreshToken",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   false,
+	})
+
+	// JSON レスポンスを返す
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Logged out successfully",
+	})
 }
