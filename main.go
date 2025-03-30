@@ -783,8 +783,8 @@ func userInvitation(c echo.Context) error {
 			RoleNames []string `json:"role_names"`
 		}{
 			{
-				Id:        3,                 // Id を 3 に設定
-				RoleNames: []string{"admin"}, // RoleName を "admin" に設定
+				Id:        3, // 本番環境のID:3を設定
+				RoleNames: []string{"admin"},
 			},
 		},
 	}
@@ -821,6 +821,7 @@ func getInvitations(c echo.Context) error {
 		return c.String(http.StatusForbidden, "Tenant that does not belong")
 	}
 
+	// テナントが発行している全招待を取得する
 	res, err := authClient.GetTenantInvitationsWithResponse(c.Request().Context(), tenantId)
 	if err != nil {
 		c.Logger().Error("failed to get tenant invitations: %v", err)
