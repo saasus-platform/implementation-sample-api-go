@@ -77,6 +77,7 @@ func run() error {
 				"Content-Type",
 				"X-Access-Token", // カスタムヘッダーを許可
 				"x-saasus-referer",
+				"X-Access-Token",
 			},
 			MaxAge: 86400,
 		}),
@@ -113,6 +114,12 @@ func run() error {
 	e.GET("/tenant_attributes_list", getTenantAttributesList)
 	// セルフサインアップを実行する
 	e.POST("/self_sign_up", selfSignup, authMiddleware)
+	// ユーザー招待を作成する
+	e.POST("/user_invitation", userInvitation, authMiddleware)
+	// ユーザー招待を取得する
+	e.GET("/invitations", getInvitations, authMiddleware)
+	// ログアウトを実行する
+	e.POST("/logout", logout, authMiddleware)
 	// MFAの状態を取得 (有効/無効の確認)
 	e.GET("/mfa_status", getMfaStatus, authMiddleware)
 	// MFAのセットアップ情報を取得 (QRコードを発行)
@@ -123,8 +130,6 @@ func run() error {
 	e.POST("/mfa_enable", enableMfa, authMiddleware)
 	// MFAを無効化する
 	e.POST("/mfa_disable", disableMfa, authMiddleware)
-	// ログアウトを実行する
-	e.POST("/logout", logout, authMiddleware)
 	return e.Start(":80")
 }
 
@@ -431,7 +436,7 @@ func userRegister(c echo.Context) error {
 
 	createSaasUserParam := authapi.CreateSaasUserJSONRequestBody{
 		Email:    email,
-		Password: password,
+		Password: &password,
 	}
 
 	_, err = authClient.CreateSaasUser(context.Background(), createSaasUserParam)
@@ -904,4 +909,109 @@ func logout(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{
 		"message": "Logged out successfully",
 	})
+}
+
+type UserInvitationRequest struct {
+	Email    string `json:"email"`
+	TenantID string `json:"tenantId"`
+}
+
+// userInvitation is a function for /user_invitation route.
+func userInvitation(c echo.Context) error {
+	var request UserInvitationRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request"})
+	}
+
+	email := request.Email
+	tenantID := request.TenantID
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantID)
+	if !isBelongingTenant {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Tenant that does not belong"})
+	}
+
+	// 招待を作成するユーザーのアクセストークンを取得
+	accessToken := c.Request().Header.Get("X-Access-Token")
+
+	// アクセストークンがリクエストヘッダーに含まれていなかったらエラー
+	if accessToken == "" {
+		return c.String(http.StatusBadRequest, "Access token is missing")
+	}
+
+	// テナント招待のパラメータを作成
+	createTenantInvitationJSONRequestBody := authapi.CreateTenantInvitationJSONRequestBody{
+		AccessToken: accessToken,
+		Email:       email,
+		Envs: []struct {
+			Id        uint64   `json:"id"`
+			RoleNames []string `json:"role_names"`
+		}{
+			{
+				Id:        3, // 本番環境のID:3を設定
+				RoleNames: []string{"admin"},
+			},
+		},
+	}
+
+	// テナントへの招待を作成
+	authClient.CreateTenantInvitation(context.Background(), tenantID, createTenantInvitationJSONRequestBody)
+
+	return c.JSON(http.StatusOK, echo.Map{"message": "Create tenant user invitation successfully"})
+}
+
+// getInvitations is a function for /invitations route.
+func getInvitations(c echo.Context) error {
+	userInfo, ok := c.Get("userInfo").(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	tenantId := c.QueryParam("tenant_id") // クエリパラメータを取得
+	if tenantId == "" {
+		c.Logger().Error("tenant_id query parameter is missing")
+		return c.String(http.StatusBadRequest, "tenant_id query parameter is required")
+	}
+
+	// ユーザーが所属しているテナントか確認する
+	isBelongingTenant := belongingTenant(userInfo.Tenants, tenantId)
+	if !isBelongingTenant {
+		c.Logger().Errorf("tenant %s does not belong to user", tenantId)
+		return c.String(http.StatusForbidden, "Tenant that does not belong")
+	}
+
+	// テナントが発行している全招待を取得する
+	res, err := authClient.GetTenantInvitationsWithResponse(c.Request().Context(), tenantId)
+	if err != nil {
+		c.Logger().Error("failed to get tenant invitations: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+	if res.JSON200 == nil {
+		var msg authapi.Error
+		if err := json.Unmarshal(res.Body, &msg); err != nil {
+			c.Logger().Error("failed to get tenant invitations: %v", err)
+			return c.String(http.StatusInternalServerError, "internal server error")
+		}
+		c.Logger().Error("failed to get tenant invitations: %v", msg)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, res.JSON200.Invitations)
 }
