@@ -130,6 +130,15 @@ func run() error {
 	e.POST("/mfa_enable", enableMfa, authMiddleware)
 	// MFAを無効化する
 	e.POST("/mfa_disable", disableMfa, authMiddleware)
+
+	// ─── Billing ────────────────────────────────────────────────────────────
+	// 課金ダッシュボードデータ取得
+	e.GET("/billing/dashboard", getBillingDashboard, authMiddleware)
+	// プラン適用期間の選択肢取得
+	e.GET("/tenant/plan_periods", getPlanPeriods, authMiddleware)
+	// TS は 10 桁 UNIX 秒。unit は metering_unit_name
+	e.POST("/metering/:tenantId/:unit/:ts", updateCountOfSpecifiedTS, authMiddleware)
+
 	return e.Start(":80")
 }
 
