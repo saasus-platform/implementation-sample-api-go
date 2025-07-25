@@ -43,6 +43,7 @@ type CurrencyTotal struct {
 // 計測単位ごとの課金明細
 type MeteringUnitBilling struct {
 	MeteringUnitName       string  `json:"metering_unit_name"`
+	MeteringUnitType       string  `json:"metering_unit_type"`
 	FunctionMenuName       string  `json:"function_menu_name"`
 	PeriodCount            float64 `json:"period_count"`
 	Currency               string  `json:"currency"`
@@ -336,6 +337,56 @@ func updateCountOfSpecifiedTS(c echo.Context) error {
 }
 
 // ──────────────────────────────────────────────
+// /metering/:tenantId/:unit   メータ更新
+// ──────────────────────────────────────────────
+func updateCountOfNow(c echo.Context) error {
+	tenantId := c.Param("tenantId")
+	unitName := c.Param("unit")
+
+	userInfo, _ := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !hasBillingAccess(userInfo, tenantId) {
+		return c.String(http.StatusForbidden, "Insufficient permissions")
+	}
+
+	var body struct {
+		Method string `json:"method"` // add | sub | direct
+		Count  int    `json:"count"`
+	}
+	if err := c.Bind(&body); err != nil {
+		return c.String(http.StatusBadRequest, "invalid JSON body")
+	}
+	if body.Count < 0 {
+		return c.String(http.StatusBadRequest, "count must be >= 0")
+	}
+
+	method := pricingapi.UpdateMeteringUnitTimestampCountMethod(body.Method)
+	switch method {
+	case pricingapi.Add, pricingapi.Sub, pricingapi.Direct:
+		// ok
+	default:
+		return c.String(http.StatusBadRequest, "method must be add, sub, or direct")
+	}
+
+	param := pricingapi.UpdateMeteringUnitTimestampCountNowParam{
+		Method: method,
+		Count:  body.Count,
+	}
+
+	resp, err := pricingClient.UpdateMeteringUnitTimestampCountNowWithResponse(
+		c.Request().Context(), tenantId, unitName, param,
+	)
+	if err != nil {
+		log.Printf("pricing API error: %v", err)
+		return c.String(http.StatusInternalServerError, "pricing API error")
+	}
+	if resp.JSON200 == nil {
+		return c.String(resp.StatusCode(), string(resp.Body))
+	}
+
+	return c.JSON(http.StatusOK, resp.JSON200)
+}
+
+// ──────────────────────────────────────────────
 // 権限制御ユーティリティ
 // ──────────────────────────────────────────────
 func hasBillingAccess(userInfo *authapi.UserInfo, tenantId string) bool {
@@ -429,6 +480,7 @@ func calculateMeteringUnitBillings(ctx context.Context, tenantId string, start, 
 			amount := calculateAmountByUnitType(count, u)
 			billings = append(billings, MeteringUnitBilling{
 				MeteringUnitName:       unitName,
+				MeteringUnitType:       unitType,
 				FunctionMenuName:       menuName,
 				PeriodCount:            count,
 				Currency:               curr,
