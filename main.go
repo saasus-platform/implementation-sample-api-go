@@ -104,6 +104,10 @@ func run() error {
 	e.GET("/user_attributes", getUserAttributes, authMiddleware)
 	// プラン情報を取得する
 	e.GET("/pricing_plan", getPricingPlan, authMiddleware)
+	// プラン一覧を取得する
+	e.GET("/pricing_plans", getPricingPlans, authMiddleware)
+	// 税率一覧を取得する
+	e.GET("/tax_rates", getTaxRates, authMiddleware)
 	// ユーザー登録を実行する
 	e.POST("/user_register", userRegister, authMiddleware)
 	// ユーザー削除を実行する
@@ -120,6 +124,10 @@ func run() error {
 	e.GET("/invitations", getInvitations, authMiddleware)
 	// ログアウトを実行する
 	e.POST("/logout", logout, authMiddleware)
+	// テナントプラン情報を取得する
+	e.GET("/tenants/:tenant_id/plan", getTenantPlanInfo, authMiddleware)
+	// テナントプランを更新する
+	e.PUT("/tenants/:tenant_id/plan", updateTenantPlan, authMiddleware)
 	// MFAの状態を取得 (有効/無効の確認)
 	e.GET("/mfa_status", getMfaStatus, authMiddleware)
 	// MFAのセットアップ情報を取得 (QRコードを発行)
