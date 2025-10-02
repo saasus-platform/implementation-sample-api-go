@@ -622,10 +622,10 @@ func getPricingPlans(c echo.Context) error {
 	if plansResp.JSON200 == nil {
 		var msg pricingapi.Error
 		if err := json.Unmarshal(plansResp.Body, &msg); err != nil {
-			c.Logger().Error("failed to get pricing plans: %v", err)
+			c.Logger().Errorf("failed to get pricing plans: %v", err)
 			return c.String(http.StatusInternalServerError, "internal server error")
 		}
-		c.Logger().Error("failed to get pricing plans: %v", msg)
+		c.Logger().Errorf("failed to get pricing plans: %v", msg)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 
@@ -655,10 +655,10 @@ func getTaxRates(c echo.Context) error {
 	if taxRatesResp.JSON200 == nil {
 		var msg pricingapi.Error
 		if err := json.Unmarshal(taxRatesResp.Body, &msg); err != nil {
-			c.Logger().Error("failed to get tax rates: %v", err)
+			c.Logger().Errorf("failed to get tax rates: %v", err)
 			return c.String(http.StatusInternalServerError, "internal server error")
 		}
-		c.Logger().Error("failed to get tax rates: %v", msg)
+		c.Logger().Errorf("failed to get tax rates: %v", msg)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 

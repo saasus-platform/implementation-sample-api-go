@@ -170,7 +170,7 @@ func refresh(c echo.Context) error {
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
-	c.Logger().Error("SaaSusRefreshToken: %v", token.Value)
+	c.Logger().Errorf("SaaSusRefreshToken: %v", token.Value)
 
 	credentials, err := credential.GetAuthCredentialsWithRefreshTokenAuth(context.Background(), token.Value)
 	if err != nil {
@@ -252,16 +252,16 @@ func getUsers(c echo.Context) error {
 
 	res, err := authClient.GetTenantUsersWithResponse(c.Request().Context(), tenantId)
 	if err != nil {
-		c.Logger().Error("failed to get saas users: %v", err)
+		c.Logger().Errorf("failed to get saas users: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 	if res.JSON200 == nil {
 		var msg authapi.Error
 		if err := json.Unmarshal(res.Body, &msg); err != nil {
-			c.Logger().Error("failed to get saas users: %v", err)
+			c.Logger().Errorf("failed to get saas users: %v", err)
 			return c.String(http.StatusInternalServerError, "internal server error")
 		}
-		c.Logger().Error("failed to get saas users: %v", msg)
+		c.Logger().Errorf("failed to get saas users: %v", msg)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 	return c.JSON(http.StatusOK, res.JSON200.Users)
@@ -1017,16 +1017,16 @@ func getInvitations(c echo.Context) error {
 	// テナントが発行している全招待を取得する
 	res, err := authClient.GetTenantInvitationsWithResponse(c.Request().Context(), tenantId)
 	if err != nil {
-		c.Logger().Error("failed to get tenant invitations: %v", err)
+		c.Logger().Errorf("failed to get tenant invitations: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 	if res.JSON200 == nil {
 		var msg authapi.Error
 		if err := json.Unmarshal(res.Body, &msg); err != nil {
-			c.Logger().Error("failed to get tenant invitations: %v", err)
+			c.Logger().Errorf("failed to get tenant invitations: %v", err)
 			return c.String(http.StatusInternalServerError, "internal server error")
 		}
-		c.Logger().Error("failed to get tenant invitations: %v", msg)
+		c.Logger().Errorf("failed to get tenant invitations: %v", msg)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 
