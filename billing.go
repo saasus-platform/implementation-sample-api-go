@@ -594,3 +594,212 @@ func hasYearUnit(menus []pricingapi.PricingMenu) bool {
 	}
 	return false
 }
+
+// ──────────────────────────────────────────────
+// プラン管理機能
+// ──────────────────────────────────────────────
+
+// getPricingPlans is a function for /pricing_plans route.
+func getPricingPlans(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// 料金プラン一覧を取得
+	plansResp, err := pricingClient.GetPricingPlansWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("failed to get pricing plans: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if plansResp.JSON200 == nil {
+		var msg pricingapi.Error
+		if err := json.Unmarshal(plansResp.Body, &msg); err != nil {
+			c.Logger().Errorf("failed to get pricing plans: %v", err)
+			return c.String(http.StatusInternalServerError, "internal server error")
+		}
+		c.Logger().Errorf("failed to get pricing plans: %v", msg)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, plansResp.JSON200.PricingPlans)
+}
+
+// getTaxRates is a function for /tax_rates route.
+func getTaxRates(c echo.Context) error {
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if len(userInfo.Tenants) == 0 {
+		c.Logger().Error("user does not belong to any tenant")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// 税率一覧を取得
+	taxRatesResp, err := pricingClient.GetTaxRatesWithResponse(context.Background())
+	if err != nil {
+		c.Logger().Errorf("failed to get tax rates: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	if taxRatesResp.JSON200 == nil {
+		var msg pricingapi.Error
+		if err := json.Unmarshal(taxRatesResp.Body, &msg); err != nil {
+			c.Logger().Errorf("failed to get tax rates: %v", err)
+			return c.String(http.StatusInternalServerError, "internal server error")
+		}
+		c.Logger().Errorf("failed to get tax rates: %v", msg)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, taxRatesResp.JSON200.TaxRates)
+}
+
+type UpdateTenantPlanRequest struct {
+	NextPlanId        string  `json:"next_plan_id"`
+	TaxRateId         *string `json:"tax_rate_id,omitempty"`
+	UsingNextPlanFrom *int64  `json:"using_next_plan_from,omitempty"`
+}
+
+// updateTenantPlan is a function for /tenants/:tenant_id/plan route (PUT).
+func updateTenantPlan(c echo.Context) error {
+	tenantId := c.Param("tenant_id")
+	if tenantId == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "tenant_id is required"})
+	}
+
+	var request UpdateTenantPlanRequest
+	if err := c.Bind(&request); err != nil {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "Invalid request"})
+	}
+	nextPlanId := request.NextPlanId
+	taxRateId := request.TaxRateId
+	usingNextPlanFrom := request.UsingNextPlanFrom
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	// 管理者権限チェック（hasBillingAccess関数を再利用）
+	if !hasBillingAccess(userInfo, tenantId) {
+		return c.String(http.StatusForbidden, "Insufficient permissions")
+	}
+
+	// テナントプランを更新
+	updateTenantPlanParam := authapi.UpdateTenantPlanParam{
+		NextPlanId: (*authapi.Uuid)(&nextPlanId),
+	}
+
+	// 税率IDが指定されている場合のみ設定
+	if taxRateId != nil && *taxRateId != "" {
+		updateTenantPlanParam.NextPlanTaxRateId = (*authapi.Uuid)(taxRateId)
+	}
+
+	// using_next_plan_fromが指定されている場合のみ設定
+	if usingNextPlanFrom != nil && *usingNextPlanFrom > 0 {
+		usingNextPlanFromInt := int(*usingNextPlanFrom)
+		updateTenantPlanParam.UsingNextPlanFrom = &usingNextPlanFromInt
+	}
+
+	resp, err := authClient.UpdateTenantPlanWithResponse(context.Background(), tenantId, updateTenantPlanParam)
+	if err != nil {
+		c.Logger().Errorf("failed to update tenant plan: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to update tenant plan"})
+	}
+
+	// レスポンスのステータスコードをチェック
+	if resp.StatusCode() != http.StatusOK {
+		c.Logger().Errorf("tenant plan update failed with status %d: %s", resp.StatusCode(), string(resp.Body))
+
+		// エラーレスポンスからmessageを抽出
+		var errorResponse map[string]interface{}
+		if err := json.Unmarshal(resp.Body, &errorResponse); err == nil {
+			if message, ok := errorResponse["message"].(string); ok {
+				return c.JSON(resp.StatusCode(), echo.Map{"error": message})
+			}
+		}
+
+		return c.JSON(resp.StatusCode(), echo.Map{"error": "Failed to update tenant plan"})
+	}
+
+	return c.JSON(http.StatusOK, echo.Map{"message": "Tenant plan updated successfully"})
+}
+
+// getTenantPlanInfo is a function for /tenants/:tenant_id route (GET).
+// Returns tenant information with plan details and reservations formatted for frontend.
+func getTenantPlanInfo(c echo.Context) error {
+	tenantId := c.Param("tenant_id")
+	if tenantId == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "tenant_id is required"})
+	}
+
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		c.Logger().Error("failed to get user info")
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Internal server error"})
+	}
+
+	// 管理者権限チェック
+	if !hasBillingAccess(userInfo, tenantId) {
+		return c.JSON(http.StatusForbidden, echo.Map{"error": "Insufficient permissions"})
+	}
+
+	// テナント詳細情報を取得
+	tenantDetailResp, err := authClient.GetTenantWithResponse(context.Background(), authapi.TenantId(tenantId))
+	if err != nil {
+		c.Logger().Errorf("Failed to retrieve tenant detail: %v", err)
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant detail"})
+	}
+
+	if tenantDetailResp.StatusCode() != http.StatusOK {
+		c.Logger().Errorf("Failed to retrieve tenant detail: status %d", tenantDetailResp.StatusCode())
+		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant detail"})
+	}
+
+	if tenantDetailResp.JSON200 == nil {
+		return c.JSON(http.StatusNotFound, echo.Map{"error": "Tenant not found"})
+	}
+
+	// 現在のプランの税率情報を取得（プラン履歴の最新エントリから）
+	var currentTaxRateId *string
+	if len(tenantDetailResp.JSON200.PlanHistories) > 0 {
+		latestPlanHistory := tenantDetailResp.JSON200.PlanHistories[len(tenantDetailResp.JSON200.PlanHistories)-1]
+		if latestPlanHistory.TaxRateId != nil {
+			taxRateIdStr := string(*latestPlanHistory.TaxRateId)
+			currentTaxRateId = &taxRateIdStr
+		}
+	}
+
+	// レスポンスを構築
+	response := echo.Map{
+		"id":               tenantDetailResp.JSON200.Id,
+		"name":             tenantDetailResp.JSON200.Name,
+		"plan_id":          tenantDetailResp.JSON200.PlanId,
+		"tax_rate_id":      currentTaxRateId,
+		"plan_reservation": nil,
+	}
+
+	// 予約情報がある場合は追加
+	if tenantDetailResp.JSON200.NextPlanId != nil {
+		planReservation := echo.Map{
+			"next_plan_id":          *tenantDetailResp.JSON200.NextPlanId,
+			"using_next_plan_from":  tenantDetailResp.JSON200.UsingNextPlanFrom,
+			"next_plan_tax_rate_id": tenantDetailResp.JSON200.NextPlanTaxRateId,
+		}
+		response["plan_reservation"] = planReservation
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
