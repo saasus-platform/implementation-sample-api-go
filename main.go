@@ -77,7 +77,7 @@ func run() error {
 				"Content-Type",
 				"X-Access-Token", // カスタムヘッダーを許可
 				"x-saasus-referer",
-				"X-Access-Token",
+				"X-Saasus-Trace-Id",
 			},
 			MaxAge: 86400,
 		}),
@@ -85,6 +85,9 @@ func run() error {
 	// Add extractRefere2rEcho to get referer from request header.
 	// This middleware allows you to set the Referer to requests in saasus-sdk.
 	e.Use(extractRefererEcho())
+	// Add extractTraceIdEcho to get trace_id from request header.
+	// This middleware allows you to propagate trace_id to SaaSus SDK requests.
+	e.Use(extractTraceIdEcho())
 
 	// 一時コードからトークンを取得する
 	e.GET("/credentials", getCredentials)
@@ -172,7 +175,7 @@ func refresh(c echo.Context) error {
 	}
 	c.Logger().Errorf("SaaSusRefreshToken: %v", token.Value)
 
-	credentials, err := credential.GetAuthCredentialsWithRefreshTokenAuth(context.Background(), token.Value)
+	credentials, err := credential.GetAuthCredentialsWithRefreshTokenAuth(c.Request().Context(), token.Value)
 	if err != nil {
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
@@ -206,6 +209,21 @@ func extractRefererEcho() echo.MiddlewareFunc {
 				c.SetRequest(c.Request().WithContext(ctx))
 			}
 
+			return next(c)
+		}
+	}
+}
+
+// extractTraceIdEcho extracts X-Saasus-Trace-Id from request header and sets it to context.
+// The SDK will automatically propagate this trace_id to outgoing SaaSus API requests.
+func extractTraceIdEcho() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			traceId := c.Request().Header.Get("X-Saasus-Trace-Id")
+			if traceId != "" {
+				ctx := context.WithValue(c.Request().Context(), ctxlib.XSaaSusTraceIdKey, traceId)
+				c.SetRequest(c.Request().WithContext(ctx))
+			}
 			return next(c)
 		}
 	}
@@ -294,14 +312,14 @@ func getTenantAttributes(c echo.Context) error {
 	}
 
 	// テナント属性の取得
-	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("failed to get tenant attributes: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
 	}
 
 	// テナント情報の取得
-	tenantInfoResp, err := authClient.GetTenantWithResponse(context.Background(), tenantId)
+	tenantInfoResp, err := authClient.GetTenantWithResponse(c.Request().Context(), tenantId)
 	if err != nil {
 		c.Logger().Errorf("failed to get tenant: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -344,7 +362,7 @@ func belongingTenant(tenants []authapi.UserAvailableTenant, tenantId authapi.Uui
 // getUserAttributes is a function for /user_attributes route.
 func getUserAttributes(c echo.Context) error {
 	// ユーザー属性の取得
-	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("failed to get tenant attributes: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -377,7 +395,7 @@ func getPricingPlan(c echo.Context) error {
 	}
 
 	// ユーザー属性の取得
-	planResp, err := pricingClient.GetPricingPlanWithResponse(context.Background(), planId)
+	planResp, err := pricingClient.GetPricingPlanWithResponse(c.Request().Context(), planId)
 	if err != nil {
 		c.Logger().Errorf("failed to get tenant attributes: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -425,7 +443,7 @@ func userRegister(c echo.Context) error {
 	}
 
 	// ユーザー属性の取得
-	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("failed to get tenant attributes: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -456,7 +474,7 @@ func userRegister(c echo.Context) error {
 		Password: &password,
 	}
 
-	_, err = authClient.CreateSaasUser(context.Background(), createSaasUserParam)
+	_, err = authClient.CreateSaasUser(c.Request().Context(), createSaasUserParam)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create SaaS user"})
 	}
@@ -466,12 +484,12 @@ func userRegister(c echo.Context) error {
 		Attributes: userAttributeValues,
 	}
 
-	tenantUser, err := authClient.CreateTenantUserWithResponse(context.Background(), tenantID, createTenantUserParam)
+	tenantUser, err := authClient.CreateTenantUserWithResponse(c.Request().Context(), tenantID, createTenantUserParam)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant user"})
 	}
 
-	rolesResp, err := authClient.GetRolesWithResponse(context.Background())
+	rolesResp, err := authClient.GetRolesWithResponse(c.Request().Context())
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to get roles"})
 	}
@@ -488,7 +506,7 @@ func userRegister(c echo.Context) error {
 		RoleNames: []string{addRole},
 	}
 
-	_, err = authClient.CreateTenantUserRolesWithResponse(context.Background(), tenantID, tenantUser.JSON201.Id, 3, createTenantUserRolesParam)
+	_, err = authClient.CreateTenantUserRolesWithResponse(c.Request().Context(), tenantID, tenantUser.JSON201.Id, 3, createTenantUserRolesParam)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to assign roles"})
 	}
@@ -554,13 +572,13 @@ func userDelete(c echo.Context) error {
 
 	// ユーザー削除処理
 	// SaaSusからユーザー情報を取得
-	deleteUser, err := authClient.GetTenantUserWithResponse(context.Background(), tenantId, userId)
+	deleteUser, err := authClient.GetTenantUserWithResponse(c.Request().Context(), tenantId, userId)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"detail": err.Error()})
 	}
 
 	// ユーザー削除
-	authClient.DeleteTenantUser(context.Background(), tenantId, userId)
+	authClient.DeleteTenantUser(c.Request().Context(), tenantId, userId)
 
 	// ユーザー削除ログをデータベースに登録
 	deleteUserLog := DeleteUserLog{
@@ -630,7 +648,7 @@ func getDeleteUserLogs(c echo.Context) error {
 }
 
 func getTenantAttributesList(c echo.Context) error {
-	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
@@ -674,7 +692,7 @@ func selfSignup(c echo.Context) error {
 	userAttributeValues := request.UserAttributeValues
 
 	// テナント属性を取得する
-	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(context.Background())
+	tenantAttributesResp, err := authClient.GetTenantAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("Failed to retrieve tenant attributes: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant attributes"})
@@ -706,7 +724,7 @@ func selfSignup(c echo.Context) error {
 		BackOfficeStaffEmail: userInfo.Email,
 	}
 
-	tenantResp, err := authClient.CreateTenantWithResponse(context.Background(), tenantProps)
+	tenantResp, err := authClient.CreateTenantWithResponse(c.Request().Context(), tenantProps)
 	if err != nil {
 		c.Logger().Errorf("Failed to create tenant: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant"})
@@ -715,7 +733,7 @@ func selfSignup(c echo.Context) error {
 	tenantID := tenantResp.JSON201.Id
 
 	// ユーザー属性を取得する
-	userAttributesResp, err := authClient.GetUserAttributesWithResponse(context.Background())
+	userAttributesResp, err := authClient.GetUserAttributesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("Failed to retrieve user attributes: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve user attributes"})
@@ -746,7 +764,7 @@ func selfSignup(c echo.Context) error {
 		Attributes: userAttributeValues,
 	}
 
-	tenantUserResp, err := authClient.CreateTenantUserWithResponse(context.Background(), tenantID, createTenantUserParam)
+	tenantUserResp, err := authClient.CreateTenantUserWithResponse(c.Request().Context(), tenantID, createTenantUserParam)
 	if err != nil {
 		c.Logger().Errorf("Failed to create tenant user: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to create tenant user"})
@@ -757,7 +775,7 @@ func selfSignup(c echo.Context) error {
 		RoleNames: []string{"admin"},
 	}
 
-	_, err = authClient.CreateTenantUserRolesWithResponse(context.Background(), tenantID, tenantUserResp.JSON201.Id, 3, createTenantUserRolesParam)
+	_, err = authClient.CreateTenantUserRolesWithResponse(c.Request().Context(), tenantID, tenantUserResp.JSON201.Id, 3, createTenantUserRolesParam)
 	if err != nil {
 		c.Logger().Errorf("Failed to assign roles: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to assign roles"})
@@ -776,7 +794,7 @@ func getMfaStatus(c echo.Context) error {
 	}
 
 	// SaaSus の API を使用してユーザーの MFA 設定を取得
-	response, err := authClient.GetUserMfaPreferenceWithResponse(context.Background(), userInfo.Id)
+	response, err := authClient.GetUserMfaPreferenceWithResponse(c.Request().Context(), userInfo.Id)
 	if err != nil || response.JSON200 == nil {
 		c.Logger().Errorf("failed to get MFA status: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve MFA status"})
@@ -804,7 +822,7 @@ func getMfaSetup(c echo.Context) error {
 	}
 
 	// SaaSus API を使用して 認証アプリケーション登録用のシークレットコードを作成
-	response, err := authClient.CreateSecretCodeWithResponse(context.Background(), userInfo.Id, authapi.CreateSecretCodeJSONRequestBody{
+	response, err := authClient.CreateSecretCodeWithResponse(c.Request().Context(), userInfo.Id, authapi.CreateSecretCodeJSONRequestBody{
 		AccessToken: accessToken,
 	})
 	if err != nil || response.JSON201 == nil {
@@ -849,7 +867,7 @@ func verifyMfa(c echo.Context) error {
 	}
 
 	// SaaSus API を使用して 認証アプリケーションを登録
-	response, err := authClient.UpdateSoftwareTokenWithResponse(context.Background(), userInfo.Id, authapi.UpdateSoftwareTokenJSONRequestBody{
+	response, err := authClient.UpdateSoftwareTokenWithResponse(c.Request().Context(), userInfo.Id, authapi.UpdateSoftwareTokenJSONRequestBody{
 		AccessToken:      accessToken,
 		VerificationCode: requestBody.VerificationCode,
 	})
@@ -877,7 +895,7 @@ func enableMfa(c echo.Context) error {
 	}
 
 	// SaaSus API を使用して MFA を有効化
-	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(c.Request().Context(), userInfo.Id, requestBody)
 	if err != nil {
 		c.Logger().Errorf("Failed to enable MFA: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to enable MFA"})
@@ -902,7 +920,7 @@ func disableMfa(c echo.Context) error {
 	}
 
 	// SaaSus API を使用して MFA を無効化
-	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(c.Request().Context(), userInfo.Id, requestBody)
 	if err != nil {
 		c.Logger().Errorf("Failed to disable MFA: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to disable MFA"})
@@ -983,7 +1001,7 @@ func userInvitation(c echo.Context) error {
 	}
 
 	// テナントへの招待を作成
-	authClient.CreateTenantInvitation(context.Background(), tenantID, createTenantInvitationJSONRequestBody)
+	authClient.CreateTenantInvitation(c.Request().Context(), tenantID, createTenantInvitationJSONRequestBody)
 
 	return c.JSON(http.StatusOK, echo.Map{"message": "Create tenant user invitation successfully"})
 }

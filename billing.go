@@ -613,7 +613,7 @@ func getPricingPlans(c echo.Context) error {
 	}
 
 	// 料金プラン一覧を取得
-	plansResp, err := pricingClient.GetPricingPlansWithResponse(context.Background())
+	plansResp, err := pricingClient.GetPricingPlansWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("failed to get pricing plans: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -646,7 +646,7 @@ func getTaxRates(c echo.Context) error {
 	}
 
 	// 税率一覧を取得
-	taxRatesResp, err := pricingClient.GetTaxRatesWithResponse(context.Background())
+	taxRatesResp, err := pricingClient.GetTaxRatesWithResponse(c.Request().Context())
 	if err != nil {
 		c.Logger().Errorf("failed to get tax rates: %v", err)
 		return c.String(http.StatusInternalServerError, "internal server error")
@@ -713,7 +713,7 @@ func updateTenantPlan(c echo.Context) error {
 		updateTenantPlanParam.UsingNextPlanFrom = &usingNextPlanFromInt
 	}
 
-	resp, err := authClient.UpdateTenantPlanWithResponse(context.Background(), tenantId, updateTenantPlanParam)
+	resp, err := authClient.UpdateTenantPlanWithResponse(c.Request().Context(), tenantId, updateTenantPlanParam)
 	if err != nil {
 		c.Logger().Errorf("failed to update tenant plan: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to update tenant plan"})
@@ -757,7 +757,7 @@ func getTenantPlanInfo(c echo.Context) error {
 	}
 
 	// テナント詳細情報を取得
-	tenantDetailResp, err := authClient.GetTenantWithResponse(context.Background(), authapi.TenantId(tenantId))
+	tenantDetailResp, err := authClient.GetTenantWithResponse(c.Request().Context(), authapi.TenantId(tenantId))
 	if err != nil {
 		c.Logger().Errorf("Failed to retrieve tenant detail: %v", err)
 		return c.JSON(http.StatusInternalServerError, echo.Map{"error": "Failed to retrieve tenant detail"})
