@@ -7,7 +7,7 @@ toolchain go1.23.0
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.11.1
-	github.com/saasus-platform/saasus-sdk-go v1.10.19
+	github.com/saasus-platform/saasus-sdk-go v1.13.2
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.11
 )
