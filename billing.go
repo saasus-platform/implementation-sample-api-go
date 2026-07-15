@@ -277,6 +277,9 @@ func getPlanPeriods(c echo.Context) error {
 	// 5) 新しい順に並べ替え
 	sort.Slice(results, func(i, j int) bool { return results[i].Start > results[j].Start })
 
+	if results == nil {
+		results = []PlanPeriodOption{}
+	}
 	return c.JSON(http.StatusOK, results)
 }
 
