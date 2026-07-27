@@ -139,6 +139,8 @@ func run() error {
 	e.POST("/mfa_verify", verifyMfa, authMiddleware)
 	// MFAを有効化する
 	e.POST("/mfa_enable", enableMfa, authMiddleware)
+	// MFAをメール認証で有効化する
+	e.POST("/mfa_email_enable", enableMfaEmail, authMiddleware)
 	// MFAを無効化する
 	e.POST("/mfa_disable", disableMfa, authMiddleware)
 
@@ -470,7 +472,7 @@ func userRegister(c echo.Context) error {
 	}
 
 	createSaasUserParam := authapi.CreateSaasUserJSONRequestBody{
-		Email:    email,
+		Email:    &email,
 		Password: &password,
 	}
 
@@ -480,7 +482,7 @@ func userRegister(c echo.Context) error {
 	}
 
 	createTenantUserParam := authapi.CreateTenantUserParam{
-		Email:      email,
+		Email:      &email,
 		Attributes: userAttributeValues,
 	}
 
@@ -760,7 +762,7 @@ func selfSignup(c echo.Context) error {
 
 	// テナントユーザーを登録する
 	createTenantUserParam := authapi.CreateTenantUserParam{
-		Email:      userInfo.Email,
+		Email:      &userInfo.Email,
 		Attributes: userAttributeValues,
 	}
 
@@ -800,8 +802,14 @@ func getMfaStatus(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve MFA status"})
 	}
 
-	// MFA の有効/無効の状態を返す
-	return c.JSON(http.StatusOK, map[string]bool{"enabled": response.JSON200.Enabled})
+	// MFA の有効/無効の状態と認証方式を返す
+	result := map[string]interface{}{
+		"enabled": response.JSON200.Enabled,
+	}
+	if response.JSON200.Method != nil {
+		result["method"] = string(*response.JSON200.Method)
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // MFAのセットアップ情報を取得 (QRコードを発行)
@@ -879,7 +887,7 @@ func verifyMfa(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "MFA verification successful"})
 }
 
-// MFAを有効化する
+// MFAを有効化する（認証アプリ）
 func enableMfa(c echo.Context) error {
 	// コンテキストからユーザー情報を取得
 	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
@@ -887,8 +895,8 @@ func enableMfa(c echo.Context) error {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
 	}
 
-	// MFA を有効化するためのリクエストボディを作成
-	method := authapi.SoftwareToken
+	// MFA を認証アプリで有効化するためのリクエストボディを作成
+	method := authapi.MfaPreferenceMethodSoftwareToken
 	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
 		Enabled: true,
 		Method:  &method,
@@ -904,6 +912,31 @@ func enableMfa(c echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"message": "MFA has been enabled"})
 }
 
+// MFAをメール認証で有効化する
+func enableMfaEmail(c echo.Context) error {
+	// コンテキストからユーザー情報を取得
+	userInfo, ok := c.Get(string(ctxlib.UserInfoKey)).(*authapi.UserInfo)
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to retrieve user information"})
+	}
+
+	// メール認証で MFA を有効化するためのリクエストボディを作成
+	method := authapi.MfaPreferenceMethodEmail
+	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
+		Enabled: true,
+		Method:  &method,
+	}
+
+	// SaaSus API を使用して MFA をメール認証で有効化
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	if err != nil {
+		c.Logger().Errorf("Failed to enable email MFA: %v", err)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to enable email MFA"})
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{"message": "Email MFA has been enabled"})
+}
+
 // MFAを無効化する
 func disableMfa(c echo.Context) error {
 	// コンテキストからユーザー情報を取得
@@ -913,7 +946,7 @@ func disableMfa(c echo.Context) error {
 	}
 
 	// MFA を無効化するためのリクエストボディを作成
-	method := authapi.SoftwareToken
+	method := authapi.MfaPreferenceMethodSoftwareToken
 	requestBody := authapi.UpdateUserMfaPreferenceJSONRequestBody{
 		Enabled: false,
 		Method:  &method,
