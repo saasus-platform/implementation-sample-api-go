@@ -223,7 +223,7 @@ func extractTraceIdEcho() echo.MiddlewareFunc {
 		return func(c echo.Context) error {
 			traceId := c.Request().Header.Get("X-Saasus-Trace-Id")
 			if traceId != "" {
-				ctx := context.WithValue(c.Request().Context(), ctxlib.XSaaSusTraceIdKey, traceId)
+				ctx := context.WithValue(c.Request().Context(), ctxlib.XSaaSusTraceIDKey, traceId)
 				c.SetRequest(c.Request().WithContext(ctx))
 			}
 			return next(c)
@@ -928,7 +928,7 @@ func enableMfaEmail(c echo.Context) error {
 	}
 
 	// SaaSus API を使用して MFA をメール認証で有効化
-	_, err := authClient.UpdateUserMfaPreferenceWithResponse(context.Background(), userInfo.Id, requestBody)
+	_, err := authClient.UpdateUserMfaPreferenceWithResponse(c.Request().Context(), userInfo.Id, requestBody)
 	if err != nil {
 		c.Logger().Errorf("Failed to enable email MFA: %v", err)
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to enable email MFA"})
