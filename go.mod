@@ -7,7 +7,10 @@ toolchain go1.23.0
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/labstack/echo/v4 v4.11.1
-	github.com/saasus-platform/saasus-sdk-go v1.13.2
+	// TODO: PKCE 対応版の SDK は現在 feature/pkce-hosted-login ブランチの
+	// コミットを疑似バージョンで参照している。SDK の正式リリース後に、
+	// リリースタグ（例: github.com/saasus-platform/saasus-sdk-go vX.Y.Z）へ更新すること。
+	github.com/saasus-platform/saasus-sdk-go v1.13.3-0.20261007004257-2b57be280407
 	gorm.io/driver/postgres v1.5.9
 	gorm.io/gorm v1.25.11
 )

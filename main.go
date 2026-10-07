@@ -89,8 +89,15 @@ func run() error {
 	// This middleware allows you to propagate trace_id to SaaSus SDK requests.
 	e.Use(extractTraceIdEcho())
 
-	// 一時コードからトークンを取得する
+	// ホスト型ログイン画面の認証情報取得（従来方式とPKCEの両対応）。
+	// フロントエンドは、保持している code_verifier の有無で振り分ける。
+	//   - 従来方式（code_challenge なし）：GET /credentials?code=... で一時コードのみ交換
+	//   - PKCE 方式（code_challenge あり）：POST /credentials で code と code_verifier を交換
+	//
+	// ※【サンプルアプリ固有】1つのサンプルで両方式を試せるよう GET/POST を併設している。
+	//   実際のアプリでは、採用する方式に応じてどちらか一方だけを実装すればよい。
 	e.GET("/credentials", getCredentials)
+	e.POST("/credentials", exchangeCredentials)
 	// リフレッシュトークンからIDトークンを取得する
 	e.GET("/refresh", refresh)
 	// アクセスしたユーザーの情報を取得する
@@ -155,7 +162,9 @@ func run() error {
 	return e.Start(":80")
 }
 
-// auth is a function for /auth route.
+// getCredentials は従来方式（PKCEなし）の認証情報取得。
+// SaaSus のログイン画面へ code_challenge を付けずに遷移した場合に、
+// 一時コードのみでトークンを取得する。
 func getCredentials(c echo.Context) error {
 	// get token string from query parameter if you set.
 	token := c.QueryParam("code")
@@ -166,6 +175,46 @@ func getCredentials(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, credentials)
+}
+
+// exchangeCredentials は PKCE 方式の認証情報取得。
+// フロントエンドで生成・保持した code_verifier と、ホスト型ログイン画面から
+// 返却された一時コード（code）を受け取り、POST /credentials/exchange
+// （ExchangeAuthCredentials）でトークンへ交換する。
+func exchangeCredentials(c echo.Context) error {
+	var request struct {
+		Code         string `json:"code"`
+		CodeVerifier string `json:"code_verifier"`
+	}
+	if err := c.Bind(&request); err != nil || request.Code == "" || request.CodeVerifier == "" {
+		return c.JSON(http.StatusBadRequest, echo.Map{"error": "invalid authentication request"})
+	}
+
+	code := authapi.Uuid(request.Code)
+	body := authapi.ExchangeAuthCredentialsJSONRequestBody{
+		AuthFlow:     authapi.ExchangeAuthCredentialsParamAuthFlowTempCodeAuth,
+		Code:         &code,
+		CodeVerifier: &request.CodeVerifier,
+	}
+
+	res, err := authClient.ExchangeAuthCredentialsWithResponse(c.Request().Context(), body)
+	if err != nil {
+		c.Logger().Errorf("failed to exchange credentials: %v", err)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+	// 401（PKCE検証失敗など）はそのままフロントへ返し、エラー表示させる
+	if res.JSON401 != nil {
+		return c.JSON(http.StatusUnauthorized, res.JSON401)
+	}
+	if res.JSON404 != nil {
+		return c.JSON(http.StatusNotFound, res.JSON404)
+	}
+	if res.JSON200 == nil {
+		c.Logger().Errorf("failed to exchange credentials: %s", res.Body)
+		return c.String(http.StatusInternalServerError, "internal server error")
+	}
+
+	return c.JSON(http.StatusOK, res.JSON200)
 }
 
 // refresh is a function for /callback route.
